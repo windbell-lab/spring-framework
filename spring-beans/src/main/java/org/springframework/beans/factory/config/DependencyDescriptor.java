@@ -23,6 +23,11 @@ import java.lang.reflect.Field;
 import java.lang.reflect.ParameterizedType;
 import java.lang.reflect.Type;
 import java.util.Map;
+import java.util.Optional;
+
+import kotlin.Metadata;
+import kotlin.reflect.KProperty;
+import kotlin.reflect.jvm.ReflectJvmMapping;
 
 import org.springframework.beans.BeansException;
 import org.springframework.beans.factory.BeanFactory;
@@ -33,6 +38,7 @@ import org.springframework.core.GenericTypeResolver;
 import org.springframework.core.MethodParameter;
 import org.springframework.core.ParameterNameDiscoverer;
 import org.springframework.core.ResolvableType;
+import org.springframework.util.ClassUtils;
 
 /**
  * Descriptor for a specific dependency that is about to be injected.
@@ -44,6 +50,10 @@ import org.springframework.core.ResolvableType;
  */
 @SuppressWarnings("serial")
 public class DependencyDescriptor extends InjectionPoint implements Serializable {
+
+	private static final boolean kotlinPresent =
+			ClassUtils.isPresent("kotlin.Unit", DependencyDescriptor.class.getClassLoader());
+
 
 	private final Class<?> declaringClass;
 
@@ -83,6 +93,7 @@ public class DependencyDescriptor extends InjectionPoint implements Serializable
 	 */
 	public DependencyDescriptor(MethodParameter methodParameter, boolean required, boolean eager) {
 		super(methodParameter);
+
 		this.declaringClass = methodParameter.getDeclaringClass();
 		if (this.methodParameter.getMethod() != null) {
 			this.methodName = methodParameter.getMethod().getName();
@@ -116,6 +127,7 @@ public class DependencyDescriptor extends InjectionPoint implements Serializable
 	 */
 	public DependencyDescriptor(Field field, boolean required, boolean eager) {
 		super(field);
+
 		this.declaringClass = field.getDeclaringClass();
 		this.fieldName = field.getName();
 		this.required = required;
@@ -128,6 +140,7 @@ public class DependencyDescriptor extends InjectionPoint implements Serializable
 	 */
 	public DependencyDescriptor(DependencyDescriptor original) {
 		super(original);
+
 		this.declaringClass = original.declaringClass;
 		this.methodName = original.methodName;
 		this.parameterTypes = original.parameterTypes;
@@ -144,7 +157,17 @@ public class DependencyDescriptor extends InjectionPoint implements Serializable
 	 * Return whether this dependency is required.
 	 */
 	public boolean isRequired() {
-		return this.required;
+		if (!this.required) {
+			return false;
+		}
+
+		if (this.field != null) {
+			return !(this.field.getType() == Optional.class ||
+					(kotlinPresent && KotlinDelegate.isNullable(this.field)));
+		}
+		else {
+			return !this.methodParameter.isOptional();
+		}
 	}
 
 	/**
@@ -173,18 +196,38 @@ public class DependencyDescriptor extends InjectionPoint implements Serializable
 	}
 
 	/**
+	 * Resolve a shortcut for this dependency against the given factory, for example
+	 * taking some pre-resolved information into account.
+	 * <p>The resolution algorithm will first attempt to resolve a shortcut through this
+	 * method before going into the regular type matching algorithm across all beans.
+	 * Subclasses may override this method to improve resolution performance based on
+	 * pre-cached information while still receiving {@link InjectionPoint} exposure etc.
+	 * @param beanFactory the associated factory
+	 * @return the shortcut result if any, or {@code null} if none
+	 * @throws BeansException if the shortcut could not be obtained
+	 * @since 4.3.1
+	 */
+	public Object resolveShortcut(BeanFactory beanFactory) throws BeansException {
+		return null;
+	}
+
+	/**
 	 * Resolve the specified bean name, as a candidate result of the matching
 	 * algorithm for this dependency, to a bean instance from the given factory.
 	 * <p>The default implementation calls {@link BeanFactory#getBean(String)}.
 	 * Subclasses may provide additional arguments or other customizations.
 	 * @param beanName the bean name, as a candidate result for this dependency
+	 * @param requiredType the expected type of the bean (as an assertion)
 	 * @param beanFactory the associated factory
 	 * @return the bean instance (never {@code null})
-	 * @since 4.3
+	 * @throws BeansException if the bean could not be obtained
+	 * @since 4.3.2
 	 * @see BeanFactory#getBean(String)
 	 */
-	public Object resolveCandidate(String beanName, BeanFactory beanFactory) {
-		return beanFactory.getBean(beanName);
+	public Object resolveCandidate(String beanName, Class<?> requiredType, BeanFactory beanFactory)
+			throws BeansException {
+
+		return beanFactory.getBean(beanName, requiredType);
 	}
 
 
@@ -375,6 +418,24 @@ public class DependencyDescriptor extends InjectionPoint implements Serializable
 		}
 		catch (Throwable ex) {
 			throw new IllegalStateException("Could not find original class structure", ex);
+		}
+	}
+
+
+	/**
+	 * Inner class to avoid a hard dependency on Kotlin at runtime.
+	 */
+	private static class KotlinDelegate {
+
+		/**
+		 * Check whether the specified {@link Field} represents a nullable Kotlin type or not.
+		 */
+		public static boolean isNullable(Field field) {
+			if (field.getDeclaringClass().isAnnotationPresent(Metadata.class)) {
+				KProperty<?> property = ReflectJvmMapping.getKotlinProperty(field);
+				return (property != null && property.getReturnType().isMarkedNullable());
+			}
+			return false;
 		}
 	}
 

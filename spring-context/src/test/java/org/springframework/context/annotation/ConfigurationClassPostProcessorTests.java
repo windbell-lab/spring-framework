@@ -20,6 +20,7 @@ import java.lang.annotation.ElementType;
 import java.lang.annotation.Retention;
 import java.lang.annotation.RetentionPolicy;
 import java.lang.annotation.Target;
+import java.util.List;
 import javax.annotation.PostConstruct;
 
 import org.junit.Before;
@@ -609,6 +610,21 @@ public class ConfigurationClassPostProcessorTests {
 		ctx.getBean("aFoo");
 	}
 
+	@Test
+	public void testInjectionPointMatchForNarrowTargetReturnType() {
+		ApplicationContext ctx = new AnnotationConfigApplicationContext(FooBarConfiguration.class);
+		assertSame(ctx.getBean(BarImpl.class), ctx.getBean(FooImpl.class).bar);
+	}
+
+	@Test
+	public void testCollectionInjectionFromSameConfigurationClass() {
+		ApplicationContext ctx = new AnnotationConfigApplicationContext(CollectionInjectionConfiguration.class);
+		CollectionInjectionConfiguration bean = ctx.getBean(CollectionInjectionConfiguration.class);
+		assertNotNull(bean.testBeans);
+		assertEquals(1, bean.testBeans.size());
+		assertSame(ctx.getBean(TestBean.class), bean.testBeans.get(0));
+	}
+
 
 	// -------------------------------------------------------------------------
 
@@ -856,7 +872,7 @@ public class ConfigurationClassPostProcessorTests {
 
 		@Bean
 		public Repository<Object> genericRepo() {
-			return new GenericRepository<Object>();
+			return new GenericRepository<>();
 		}
 	}
 
@@ -918,12 +934,12 @@ public class ConfigurationClassPostProcessorTests {
 
 		@Bean
 		public Repository<? extends String> stringRepo() {
-			return new Repository<String>();
+			return new Repository<>();
 		}
 
 		@Bean
 		public Repository<? extends Number> numberRepo() {
-			return new Repository<Number>();
+			return new Repository<>();
 		}
 
 		@Bean
@@ -942,7 +958,7 @@ public class ConfigurationClassPostProcessorTests {
 
 		@Bean
 		public Repository<? extends Number> numberRepo() {
-			return new Repository<Number>();
+			return new Repository<>();
 		}
 
 		@Bean
@@ -955,7 +971,7 @@ public class ConfigurationClassPostProcessorTests {
 	@ComponentScan(basePackages = "org.springframework.context.annotation.componentscan.simple")
 	@Retention(RetentionPolicy.RUNTIME)
 	@Target(ElementType.TYPE)
-	public static @interface ComposedConfiguration {
+	public @interface ComposedConfiguration {
 	}
 
 	@ComposedConfiguration
@@ -966,7 +982,7 @@ public class ConfigurationClassPostProcessorTests {
 	@ComponentScan
 	@Retention(RetentionPolicy.RUNTIME)
 	@Target(ElementType.TYPE)
-	public static @interface ComposedConfigurationWithAttributeOverrides {
+	public @interface ComposedConfigurationWithAttributeOverrides {
 
 		String[] basePackages() default {};
 
@@ -985,7 +1001,7 @@ public class ConfigurationClassPostProcessorTests {
 	@ComposedConfigurationWithAttributeOverrides
 	@Retention(RetentionPolicy.RUNTIME)
 	@Target(ElementType.TYPE)
-	public static @interface ComposedComposedConfigurationWithAttributeOverrides {
+	public @interface ComposedComposedConfigurationWithAttributeOverrides {
 
 		String[] basePackages() default {};
 	}
@@ -997,14 +1013,14 @@ public class ConfigurationClassPostProcessorTests {
 	@ComponentScan
 	@Retention(RetentionPolicy.RUNTIME)
 	@Target(ElementType.TYPE)
-	public static @interface MetaComponentScan {
+	public @interface MetaComponentScan {
 	}
 
 	@MetaComponentScan
 	@Configuration
 	@Retention(RetentionPolicy.RUNTIME)
 	@Target(ElementType.TYPE)
-	public static @interface MetaComponentScanConfigurationWithAttributeOverrides {
+	public @interface MetaComponentScanConfigurationWithAttributeOverrides {
 
 		String[] basePackages() default {};
 	}
@@ -1063,17 +1079,27 @@ public class ConfigurationClassPostProcessorTests {
 		}
 	}
 
-	public interface DefaultMethodsConfig {
+	public interface BaseInterface {
 
-		@Bean
-		default ServiceBean serviceBean() {
-			return provider().getServiceBean();
-		}
+		ServiceBean serviceBean();
+	}
+
+	public interface BaseDefaultMethods extends BaseInterface {
 
 		@Bean
 		default ServiceBeanProvider provider() {
 			return new ServiceBeanProvider();
 		}
+
+		@Bean
+		@Override
+		default ServiceBean serviceBean() {
+			return provider().getServiceBean();
+		}
+	}
+
+	public interface DefaultMethodsConfig extends BaseDefaultMethods {
+
 	}
 
 	@Configuration
@@ -1105,7 +1131,7 @@ public class ConfigurationClassPostProcessorTests {
 	@Configuration
 	public static class A {
 
-		@Autowired(required=true)
+		@Autowired(required = true)
 		Z z;
 
 		@Bean
@@ -1209,6 +1235,44 @@ public class ConfigurationClassPostProcessorTests {
 	static abstract class FooFactory {
 
 		abstract DependingFoo createFoo(BarArgument bar);
+	}
+
+	interface BarInterface {
+	}
+
+	static class BarImpl implements BarInterface {
+	}
+
+	static class FooImpl {
+
+		@Autowired
+		public BarImpl bar;
+	}
+
+	@Configuration
+	static class FooBarConfiguration {
+
+		@Bean @DependsOn("bar")
+		public FooImpl foo() {
+			return new FooImpl();
+		}
+
+		@Bean
+		public BarInterface bar() {
+			return new BarImpl();
+		}
+	}
+
+	@Configuration
+	static class CollectionInjectionConfiguration {
+
+		@Autowired(required = false)
+		public List<TestBean> testBeans;
+
+		@Bean
+		public TestBean thing() {
+			return new TestBean();
+		}
 	}
 
 }
